@@ -2,24 +2,6 @@
  * MIT License
  *
  * Copyright (c) 2025
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
  */
 
 #include <stdlib.h>
@@ -66,7 +48,9 @@ void k91man_face_activate(movement_settings_t *settings, void *context) {
     _update_alarm_indicator(settings->bit.alarm_enabled, state);
 
     watch_set_colon();
-    state->previous_date_time = 0xFFFFFFFF;
+    state->previous_minute = 0xFF;
+    state->previous_second = 0xFF;
+    state->previous_day_date = 0xFF;
 }
 
 static void _format_standard_time(watch_date_time dt, movement_settings_t *settings, char *buf, uint8_t *pos, bool *set_leading_zero, bool low_energy) {
@@ -124,16 +108,25 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
     uint8_t pos;
 
     watch_date_time date_time;
-    uint32_t previous_date_time;
     switch (event.event_type) {
         case EVENT_ACTIVATE:
         case EVENT_TICK:
         case EVENT_LOW_ENERGY_UPDATE:
             date_time = watch_rtc_get_date_time();
-            previous_date_time = state->previous_date_time;
-            state->previous_date_time = date_time.reg;
+            uint8_t prev_min = state->previous_minute;
+            uint8_t prev_sec = state->previous_second;
+            uint8_t prev_day_date = state->previous_day_date;
+            state->previous_minute = date_time.unit.minute;
+            state->previous_second = date_time.unit.second;
+            state->previous_day_date = (date_time.unit.hour << 5) | date_time.unit.day;
+            
+            // Beep once at exactly 17:00:00 (5:00:00 PM)
+            if (date_time.unit.hour == 17 && date_time.unit.minute == 0 && date_time.unit.second == 0 && prev_sec != 0) {
+                watch_buzzer_play_note(BUZZER_NOTE_C8, 150); // Play a short celebratory beep
+            }
 
-            if (date_time.unit.day != state->last_battery_check) {
+            // check the battery voltage once a week (on day change when day % 7 == 0)
+            if (date_time.unit.day != state->last_battery_check && (date_time.unit.day % 7) == 0) {
                 state->last_battery_check = date_time.unit.day;
                 watch_enable_adc();
                 uint16_t voltage = watch_get_vcc_voltage();
@@ -148,7 +141,10 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
             // Determine display mode: 09:00:00 - 16:59:59 inclusive -> countdown to 17:00
             bool between_9_and_5 = (date_time.unit.hour >= 9 && date_time.unit.hour < 17);
 
-            if ((date_time.reg >> 6) == (previous_date_time >> 6) && !low_energy) {
+            bool seconds_only = (date_time.unit.minute == prev_min && prev_sec != date_time.unit.second && 
+                                prev_day_date == ((date_time.unit.hour << 5) | date_time.unit.day) && !low_energy);
+            
+            if (seconds_only) {
                 // seconds only changed
                 if (!between_9_and_5) {
                     watch_display_character_lp_seconds('0' + date_time.unit.second / 10, 8);
@@ -165,7 +161,7 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
                 watch_display_character_lp_seconds('0' + (dur.seconds / 10), 8);
                 watch_display_character_lp_seconds('0' + (dur.seconds % 10), 9);
                 break;
-            } else if ((date_time.reg >> 12) == (previous_date_time >> 12) && !low_energy) {
+            } else if (date_time.unit.minute != prev_min && prev_day_date == ((date_time.unit.hour << 5) | date_time.unit.day) && !low_energy) {
                 // minutes changed
                 pos = 6;
                 if (!between_9_and_5) sprintf(buf, "%02d%02d", date_time.unit.minute, date_time.unit.second);

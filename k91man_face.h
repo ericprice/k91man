@@ -28,7 +28,9 @@
 #include "movement.h"
 
 typedef struct {
-    uint32_t previous_date_time;
+    uint8_t previous_minute;
+    uint8_t previous_second;
+    uint8_t previous_day_date;  // Combined day and hour for change detection
     uint8_t last_battery_check;
     uint8_t watch_face_index;
     bool signal_enabled;
