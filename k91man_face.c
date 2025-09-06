@@ -71,9 +71,9 @@ static void _format_standard_time(watch_date_time dt, movement_settings_t *setti
     *pos = 0;
     if (low_energy) {
         if (!watch_tick_animation_is_running()) watch_start_tick_animation(500);
-        sprintf(buf, "%s%2d%2d%02d  ", watch_utility_get_weekday(dt), dt.unit.day, dt.unit.hour, dt.unit.minute);
+        snprintf(buf, 11, "%s%2d%2d%02d  ", watch_utility_get_weekday(dt), dt.unit.day, dt.unit.hour, dt.unit.minute);
     } else {
-        sprintf(buf, "%s%2d%2d%02d%02d", watch_utility_get_weekday(dt), dt.unit.day, dt.unit.hour, dt.unit.minute, dt.unit.second);
+        snprintf(buf, 11, "%s%2d%2d%02d%02d", watch_utility_get_weekday(dt), dt.unit.day, dt.unit.hour, dt.unit.minute, dt.unit.second);
     }
 }
 
@@ -89,16 +89,17 @@ static void _format_countdown_to_5pm(watch_date_time now_dt, movement_settings_t
     uint32_t diff_adj = (diff > 0) ? (diff - 1) : 0;
     watch_duration_t dur = watch_utility_seconds_to_duration(diff_adj);
     uint32_t hours_total = dur.hours + (uint32_t)dur.days * 24U;
+    int hours2 = (hours_total > 99U) ? 99 : (int)hours_total; // bound to 2 digits for display
 
     // Format as HH:MM:SS on the main six digits; leave weekday+day as spaces (4 spaces)
     *pos = 0;
     if (low_energy) {
         if (!watch_tick_animation_is_running()) watch_start_tick_animation(500);
         // 4 spaces + HH + MM + 2 spaces = 10 chars
-        sprintf(buf, "    %02d%02d  ", (int)hours_total, (int)dur.minutes);
+        snprintf(buf, 11, "    %02d%02d  ", hours2, (int)dur.minutes);
     } else {
         // 4 spaces + HH + MM + SS = 10 chars
-        sprintf(buf, "    %02d%02d%02d", (int)hours_total, (int)dur.minutes, (int)dur.seconds);
+        snprintf(buf, 11, "    %02d%02d%02d", hours2, (int)dur.minutes, (int)dur.seconds);
     }
 }
 
@@ -164,7 +165,7 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
             } else if (date_time.unit.minute != prev_min && prev_day_date == ((date_time.unit.hour << 5) | date_time.unit.day) && !low_energy) {
                 // minutes changed
                 pos = 6;
-                if (!between_9_and_5) sprintf(buf, "%02d%02d", date_time.unit.minute, date_time.unit.second);
+                if (!between_9_and_5) snprintf(buf, 11, "%02d%02d", date_time.unit.minute, date_time.unit.second);
                 else {
                     uint32_t tz = _get_tz_offset_seconds(settings);
                     uint32_t now_ts = watch_utility_date_time_to_unix_time(date_time, tz);
@@ -172,7 +173,7 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
                     uint32_t diff = (now_ts < target_ts) ? (target_ts - now_ts) : 0;
                     uint32_t diff_adj = (diff > 0) ? (diff - 1) : 0;
                     watch_duration_t dur = watch_utility_seconds_to_duration(diff_adj);
-                    sprintf(buf, "%02d%02d", dur.minutes, dur.seconds);
+                    snprintf(buf, 11, "%02d%02d", dur.minutes, dur.seconds);
                 }
             } else {
                 if (!between_9_and_5) {
@@ -214,5 +215,3 @@ bool k91man_face_wants_background_task(movement_settings_t *settings, void *cont
     watch_date_time date_time = watch_rtc_get_date_time();
     return date_time.unit.minute == 0;
 }
-
-
