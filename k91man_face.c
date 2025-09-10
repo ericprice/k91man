@@ -9,7 +9,7 @@
 #include "k91man_face.h"
 #include "watch.h"
 #include "watch_utility.h"
-#include "watch_private_display.h"
+#include "watch_common_display.h"
 
 static void _update_alarm_indicator(bool settings_alarm_enabled, k91man_state_t *state) {
     state->alarm_enabled = settings_alarm_enabled;
@@ -17,45 +17,53 @@ static void _update_alarm_indicator(bool settings_alarm_enabled, k91man_state_t 
     else watch_clear_indicator(WATCH_INDICATOR_SIGNAL);
 }
 
-static uint32_t _get_tz_offset_seconds(movement_settings_t *settings) {
-    return (uint32_t)(movement_timezone_offsets[settings->bit.time_zone]) * 60;
-}
+// No per-face timezone: use Movement's current local offset
 
-void k91man_face_setup(movement_settings_t *settings, uint8_t watch_face_index, void ** context_ptr) {
-    (void) settings;
+void k91man_face_setup(uint8_t watch_face_index, void ** context_ptr) {
     if (*context_ptr == NULL) {
         *context_ptr = malloc(sizeof(k91man_state_t));
         k91man_state_t *state = (k91man_state_t *)*context_ptr;
         state->signal_enabled = false;
         state->watch_face_index = watch_face_index;
+        state->battery_low = false;
+        state->last_battery_check = 0xFF;
     }
 }
 
-void k91man_face_activate(movement_settings_t *settings, void *context) {
+void k91man_face_activate(void *context) {
     k91man_state_t *state = (k91man_state_t *)context;
 
-    if (watch_tick_animation_is_running()) watch_stop_tick_animation();
+    if (watch_sleep_animation_is_running()) watch_stop_sleep_animation();
 
 #ifdef CLOCK_FACE_24H_ONLY
     watch_set_indicator(WATCH_INDICATOR_24H);
 #else
-    if (settings->bit.clock_mode_24h) watch_set_indicator(WATCH_INDICATOR_24H);
+    if (movement_clock_mode_24h()) watch_set_indicator(WATCH_INDICATOR_24H);
 #endif
 
     if (state->signal_enabled) watch_set_indicator(WATCH_INDICATOR_BELL);
     else watch_clear_indicator(WATCH_INDICATOR_BELL);
 
-    _update_alarm_indicator(settings->bit.alarm_enabled, state);
+    _update_alarm_indicator(movement_alarm_enabled(), state);
 
     watch_set_colon();
     state->previous_minute = 0xFF;
     state->previous_second = 0xFF;
     state->previous_day_date = 0xFF;
+
+    // Initial battery check and indicator state
+    watch_enable_adc();
+    uint16_t voltage = watch_get_vcc_voltage();
+    watch_disable_adc();
+    state->battery_low = (voltage < 2400); // align with clock face threshold
+    if (state->battery_low) watch_set_indicator(WATCH_INDICATOR_LAP);
+    else watch_clear_indicator(WATCH_INDICATOR_LAP);
 }
 
-static void _format_standard_time(watch_date_time dt, movement_settings_t *settings, char *buf, uint8_t *pos, bool *set_leading_zero, bool low_energy) {
+static void _format_standard_time(watch_date_time_t dt, movement_settings_t *settings, char *buf, uint8_t *pos, bool *set_leading_zero, bool low_energy) {
+    (void)settings; // preferences accessed via movement_* helpers
 #ifndef CLOCK_FACE_24H_ONLY
-    if (!settings->bit.clock_mode_24h) {
+    if (movement_clock_mode_24h() == MOVEMENT_CLOCK_MODE_12H) {
         if (dt.unit.hour < 12) {
             watch_clear_indicator(WATCH_INDICATOR_PM);
         } else {
@@ -65,20 +73,20 @@ static void _format_standard_time(watch_date_time dt, movement_settings_t *setti
         if (dt.unit.hour == 0) dt.unit.hour = 12;
     }
 #endif
-    if (settings->bit.clock_mode_24h && settings->bit.clock_24h_leading_zero && dt.unit.hour < 10) {
+    if (movement_clock_mode_24h() == MOVEMENT_CLOCK_MODE_024H && dt.unit.hour < 10) {
         *set_leading_zero = true;
     }
     *pos = 0;
     if (low_energy) {
-        if (!watch_tick_animation_is_running()) watch_start_tick_animation(500);
-        snprintf(buf, 11, "%s%2d%2d%02d  ", watch_utility_get_weekday(dt), dt.unit.day, dt.unit.hour, dt.unit.minute);
+        snprintf(buf, 16, "%s%2d%2d%02d  ", watch_utility_get_weekday(dt), dt.unit.day, dt.unit.hour, dt.unit.minute);
     } else {
-        snprintf(buf, 11, "%s%2d%2d%02d%02d", watch_utility_get_weekday(dt), dt.unit.day, dt.unit.hour, dt.unit.minute, dt.unit.second);
+        snprintf(buf, 16, "%s%2d%2d%02d%02d", watch_utility_get_weekday(dt), dt.unit.day, dt.unit.hour, dt.unit.minute, dt.unit.second);
     }
 }
 
-static void _format_countdown_to_5pm(watch_date_time now_dt, movement_settings_t *settings, char *buf, uint8_t *pos, bool low_energy) {
-    uint32_t tz = _get_tz_offset_seconds(settings);
+static void _format_countdown_to_5pm(watch_date_time_t now_dt, movement_settings_t *settings, char *buf, uint8_t *pos, bool low_energy) {
+    (void)settings;
+    uint32_t tz = (uint32_t)movement_get_current_timezone_offset();
 
     uint32_t now_ts = watch_utility_date_time_to_unix_time(now_dt, tz);
     // target is today at 17:00:00 local time
@@ -94,26 +102,25 @@ static void _format_countdown_to_5pm(watch_date_time now_dt, movement_settings_t
     // Format as HH:MM:SS on the main six digits; leave weekday+day as spaces (4 spaces)
     *pos = 0;
     if (low_energy) {
-        if (!watch_tick_animation_is_running()) watch_start_tick_animation(500);
         // 4 spaces + HH + MM + 2 spaces = 10 chars
-        snprintf(buf, 11, "    %02d%02d  ", hours2, (int)dur.minutes);
+        snprintf(buf, 16, "    %02d%02d  ", hours2, (int)dur.minutes);
     } else {
         // 4 spaces + HH + MM + SS = 10 chars
-        snprintf(buf, 11, "    %02d%02d%02d", hours2, (int)dur.minutes, (int)dur.seconds);
+        snprintf(buf, 16, "    %02d%02d%02d", hours2, (int)dur.minutes, (int)dur.seconds);
     }
 }
 
-bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, void *context) {
+bool k91man_face_loop(movement_event_t event, void *context) {
     k91man_state_t *state = (k91man_state_t *)context;
-    char buf[11];
+    char buf[16];
     uint8_t pos;
 
-    watch_date_time date_time;
+    watch_date_time_t date_time;
     switch (event.event_type) {
         case EVENT_ACTIVATE:
         case EVENT_TICK:
         case EVENT_LOW_ENERGY_UPDATE:
-            date_time = watch_rtc_get_date_time();
+            date_time = movement_get_local_date_time();
             uint8_t prev_min = state->previous_minute;
             uint8_t prev_sec = state->previous_second;
             uint8_t prev_day_date = state->previous_day_date;
@@ -132,9 +139,10 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
                 watch_enable_adc();
                 uint16_t voltage = watch_get_vcc_voltage();
                 watch_disable_adc();
-                state->battery_low = (voltage < 2200);
+                state->battery_low = (voltage < 2400);
             }
             if (state->battery_low) watch_set_indicator(WATCH_INDICATOR_LAP);
+            else watch_clear_indicator(WATCH_INDICATOR_LAP);
 
             bool low_energy = (event.event_type == EVENT_LOW_ENERGY_UPDATE);
             bool set_leading_zero = false;
@@ -153,7 +161,7 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
                     break;
                 }
                 // countdown mode: update seconds field
-                uint32_t tz = _get_tz_offset_seconds(settings);
+                uint32_t tz = (uint32_t)movement_get_current_timezone_offset();
                 uint32_t now_ts = watch_utility_date_time_to_unix_time(date_time, tz);
                 uint32_t target_ts = watch_utility_convert_to_unix_time(date_time.unit.year + WATCH_RTC_REFERENCE_YEAR, date_time.unit.month, date_time.unit.day, 17, 0, 0, tz);
                 uint32_t diff = (now_ts < target_ts) ? (target_ts - now_ts) : 0;
@@ -165,28 +173,60 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
             } else if (date_time.unit.minute != prev_min && prev_day_date == ((date_time.unit.hour << 5) | date_time.unit.day) && !low_energy) {
                 // minutes changed
                 pos = 6;
-                if (!between_9_and_5) snprintf(buf, 11, "%02d%02d", date_time.unit.minute, date_time.unit.second);
+                if (!between_9_and_5) snprintf(buf, sizeof(buf), "%02d%02d", date_time.unit.minute, date_time.unit.second);
                 else {
-                    uint32_t tz = _get_tz_offset_seconds(settings);
+                    uint32_t tz = (uint32_t)movement_get_current_timezone_offset();
                     uint32_t now_ts = watch_utility_date_time_to_unix_time(date_time, tz);
                     uint32_t target_ts = watch_utility_convert_to_unix_time(date_time.unit.year + WATCH_RTC_REFERENCE_YEAR, date_time.unit.month, date_time.unit.day, 17, 0, 0, tz);
                     uint32_t diff = (now_ts < target_ts) ? (target_ts - now_ts) : 0;
                     uint32_t diff_adj = (diff > 0) ? (diff - 1) : 0;
                     watch_duration_t dur = watch_utility_seconds_to_duration(diff_adj);
-                    snprintf(buf, 11, "%02d%02d", dur.minutes, dur.seconds);
+                    snprintf(buf, sizeof(buf), "%02d%02d", dur.minutes, dur.seconds);
                 }
             } else {
                 if (!between_9_and_5) {
-                    _format_standard_time(date_time, settings, buf, &pos, &set_leading_zero, low_energy);
+                    _format_standard_time(date_time, NULL, buf, &pos, &set_leading_zero, low_energy);
                 } else {
-                    _format_countdown_to_5pm(date_time, settings, buf, &pos, low_energy);
+                    _format_countdown_to_5pm(date_time, NULL, buf, &pos, low_energy);
                 }
             }
 
-            watch_display_string(buf, pos);
-            if (set_leading_zero) watch_display_string("0", 4);
+            if (pos == 6) {
+                // Buffer contains MMSS
+                watch_display_text(WATCH_POSITION_MINUTES, buf);
+                watch_display_text(WATCH_POSITION_SECONDS, buf + 2);
+            } else {
+                // Full refresh cases
+                if (!between_9_and_5) {
+                    // Standard time: show weekday at top-left, day at top-right, time at bottom
+                    watch_display_text_with_fallback(WATCH_POSITION_TOP_LEFT, watch_utility_get_long_weekday(date_time), watch_utility_get_weekday(date_time));
+                    char tr[3]; snprintf(tr, sizeof(tr), "%2d", date_time.unit.day);
+                    watch_display_text(WATCH_POSITION_TOP_RIGHT, tr);
+                    if (low_energy) {
+                        char bot[7]; snprintf(bot, sizeof(bot), "%02d%02d  ", date_time.unit.hour, date_time.unit.minute);
+                        watch_display_text(WATCH_POSITION_BOTTOM, bot);
+                    } else {
+                        char bot[7]; snprintf(bot, sizeof(bot), "%02d%02d%02d", date_time.unit.hour, date_time.unit.minute, date_time.unit.second);
+                        watch_display_text(WATCH_POSITION_BOTTOM, bot);
+                    }
+                } else {
+                    // Countdown mode: top-left blank, bottom shows HH:MM[:SS]
+                    watch_display_text(WATCH_POSITION_TOP_LEFT, "  ");
+                    if (low_energy) {
+                        // buf contains 4 spaces + HHMM + 2 spaces, take bottom portion only
+                        char bot[7]; snprintf(bot, sizeof(bot), "%.*s", 6, buf + 4);
+                        watch_display_text(WATCH_POSITION_BOTTOM, bot);
+                    } else {
+                        char bot[7]; snprintf(bot, sizeof(bot), "%.*s", 6, buf + 4);
+                        watch_display_text(WATCH_POSITION_BOTTOM, bot);
+                    }
+                }
+            }
 
-            if (state->alarm_enabled != settings->bit.alarm_enabled) _update_alarm_indicator(settings->bit.alarm_enabled, state);
+            {
+                bool alarm_now = movement_alarm_enabled();
+                if (state->alarm_enabled != alarm_now) _update_alarm_indicator(alarm_now, state);
+            }
             break;
         case EVENT_ALARM_LONG_PRESS:
             state->signal_enabled = !state->signal_enabled;
@@ -197,21 +237,12 @@ bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, voi
             movement_play_signal();
             break;
         default:
-            return movement_default_loop_handler(event, settings);
+            return movement_default_loop_handler(event);
     }
 
     return true;
 }
 
-void k91man_face_resign(movement_settings_t *settings, void *context) {
-    (void) settings;
+void k91man_face_resign(void *context) {
     (void) context;
-}
-
-bool k91man_face_wants_background_task(movement_settings_t *settings, void *context) {
-    (void) settings;
-    k91man_state_t *state = (k91man_state_t *)context;
-    if (!state->signal_enabled) return false;
-    watch_date_time date_time = watch_rtc_get_date_time();
-    return date_time.unit.minute == 0;
 }

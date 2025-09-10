@@ -38,20 +38,18 @@ typedef struct {
     bool alarm_enabled;
 } k91man_state_t;
 
-void k91man_face_setup(movement_settings_t *settings, uint8_t watch_face_index, void ** context_ptr);
-void k91man_face_activate(movement_settings_t *settings, void *context);
-bool k91man_face_loop(movement_event_t event, movement_settings_t *settings, void *context);
-void k91man_face_resign(movement_settings_t *settings, void *context);
-bool k91man_face_wants_background_task(movement_settings_t *settings, void *context);
+void k91man_face_setup(uint8_t watch_face_index, void ** context_ptr);
+void k91man_face_activate(void *context);
+bool k91man_face_loop(movement_event_t event, void *context);
+void k91man_face_resign(void *context);
 
 #define k91man_face ((const watch_face_t){ \
     k91man_face_setup, \
     k91man_face_activate, \
     k91man_face_loop, \
     k91man_face_resign, \
-    k91man_face_wants_background_task, \
+    NULL, \
 })
 
 #endif // K91MAN_FACE_H_
-
 
