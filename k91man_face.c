@@ -202,11 +202,25 @@ bool k91man_face_loop(movement_event_t event, void *context) {
                     watch_display_text_with_fallback(WATCH_POSITION_TOP_LEFT, watch_utility_get_long_weekday(date_time), watch_utility_get_weekday(date_time));
                     char tr[3]; snprintf(tr, sizeof(tr), "%2d", date_time.unit.day);
                     watch_display_text(WATCH_POSITION_TOP_RIGHT, tr);
+
+                    watch_date_time_t display_dt = date_time;
+#ifndef CLOCK_FACE_24H_ONLY
+                    if (movement_clock_mode_24h() == MOVEMENT_CLOCK_MODE_12H) {
+                        if (display_dt.unit.hour < 12) {
+                            watch_clear_indicator(WATCH_INDICATOR_PM);
+                        } else {
+                            watch_set_indicator(WATCH_INDICATOR_PM);
+                        }
+                        display_dt.unit.hour %= 12;
+                        if (display_dt.unit.hour == 0) display_dt.unit.hour = 12;
+                    }
+#endif
+
                     if (low_energy) {
-                        char bot[7]; snprintf(bot, sizeof(bot), "%02d%02d  ", date_time.unit.hour, date_time.unit.minute);
+                        char bot[7]; snprintf(bot, sizeof(bot), "%02d%02d  ", display_dt.unit.hour, display_dt.unit.minute);
                         watch_display_text(WATCH_POSITION_BOTTOM, bot);
                     } else {
-                        char bot[7]; snprintf(bot, sizeof(bot), "%02d%02d%02d", date_time.unit.hour, date_time.unit.minute, date_time.unit.second);
+                        char bot[7]; snprintf(bot, sizeof(bot), "%02d%02d%02d", display_dt.unit.hour, display_dt.unit.minute, display_dt.unit.second);
                         watch_display_text(WATCH_POSITION_BOTTOM, bot);
                     }
                 } else {
