@@ -28,14 +28,16 @@
 #include "movement.h"
 
 typedef struct {
-    uint8_t previous_minute;
-    uint8_t previous_second;
-    uint8_t previous_day_date;  // Combined day and hour for change detection
+    watch_date_time_t previous;
+    uint32_t last_timestamp;
+    int32_t last_timezone_offset;
     uint8_t last_battery_check;
-    uint8_t watch_face_index;
-    bool signal_enabled;
+    uint8_t rendered_hour;
+    uint8_t rendered_minute;
+    uint8_t rendered_second;
     bool battery_low;
     bool alarm_enabled;
+    bool in_low_energy;
 } k91man_state_t;
 
 void k91man_face_setup(uint8_t watch_face_index, void ** context_ptr);
@@ -52,4 +54,3 @@ void k91man_face_resign(void *context);
 })
 
 #endif // K91MAN_FACE_H_
-
